@@ -1,12 +1,6 @@
 require "ruby_llm"
 # require "colorize"
 
-RubyLLM.configure do |config|
-  # config.openai_api_key = Rails.application.credentials[:openai_api_key]
-  config.anthropic_api_key = Rails.application.credentials[:anthropic_api_key]
-  config.default_model = "claude-sonnet-4" # optional, makes Claude the default
-end
-
 def white(char)     = "\e[97m#{char}\e[0m"
 def blue(char)      = "\e[94m#{char}\e[0m"
 def deep_blue(char) = "\e[34m#{char}\e[0m"

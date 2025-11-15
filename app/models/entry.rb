@@ -1,50 +1,48 @@
 class Entry < ApplicationRecord
-  # Regex pattern to match H: followed by ratings 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5
-  # Uses non-greedy matching to capture the first H: occurrence
-  HUMOR_PATTERN = /.*?H:\s*(1(?:\.5)?|2(?:\.5)?|3(?:\.5)?|4(?:\.5)?)\b/
+  include EntryImporter
 
-  def self.each_stored
-    Dir.entries('data/entries')
-       .select { |entry| File.file?(File.join('data/entries', entry)) }
-       .sort
-       .each do |filename|
-         next if filename == ".DS_Store"
-         next if filename == ".git"
-         next unless filename.match(/^\d{4}_\d{2}_\d{2}\.md$/)
+  has_neighbors :embedding
 
-         file_path = File.join('data/entries', filename)
-         content = File.read(file_path)
+  scope :semantic_search, ->(query, limit: 20) {
+    query_vec = RubyLLM.embed(query).vectors
+    nearest_neighbors(:embedding, query_vec, distance: "cosine").limit(limit)
+  }
+  # neighbor_distance
 
-         # Remove lines starting with 'title::'
-         content = content.lines.reject { |line| line.strip.start_with?('title::') }.join
-         year, month, day = filename.gsub('.md', '').split('_')
-         date = DateTime.new(year.to_i, month.to_i, day.to_i, 12, 0, 0, "-3")
-
-         entry = { filename:, date:, content: }
-
-         yield entry
-       end
+  def self.search_content(query, limit: 20)
+    semantic_search(query, limit:).pluck(:date, :content)
   end
 
-  def self.store
-    each_stored do |entry|
-      humor, humor_line = extract_humor(entry[:content])
-      create!(
-        humor:,
-        humor_line:,
-        date: entry[:date],
-        content: entry[:content]
-      )
+  def self.on_date(date_as_string)
+    date = DateTime.parse(date_as_string)
+    where(date:)
+  end
+
+  def self.generate_embedding
+    puts
+    Entry.where.not(embedding: nil).in_batches(of: 100) do |entries_batch|
+      contents = entries_batch.pluck(:content)
+      vectors = RubyLLM.embed(contents).vectors
+      puts "*"
+      entries_batch.each_with_index do |entry, index|
+        entry.update(embedding: vectors[index])
+        print "."
+      end
+      puts
     end
   end
 
-  def self.extract_humor(content)
-    each_stored do |entry|
-      entry[:content].lines.each do |line|
-        if match = line.match(HUMOR_PATTERN)
-          return { humor: match[1].to_f, humor_line: line.strip }
-        end
-      end
+  def generate_embedding
+    return if content.blank?
+
+    begin
+      embedding_result = RubyLLM.embed(content) # Uses default embedding model
+      self.embedding = embedding_result.vectors
+      save!
+    rescue RubyLLM::Error => e
+      errors.add(:base, "Failed to generate embedding: #{e.message}")
+      # Prevent saving if embedding fails (optional, depending on requirements)
+      throw :abort
     end
   end
 end
